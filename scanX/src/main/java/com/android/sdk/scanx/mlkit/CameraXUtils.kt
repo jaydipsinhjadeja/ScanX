@@ -1,8 +1,11 @@
 package com.android.sdk.scanx.mlkit
 
+import android.Manifest
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -14,10 +17,12 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.android.sdk.scanx.bus.LiveDataBus
 import com.android.sdk.scanx.coroutines.CoroutineUseCase
+import com.asgl.sdk.common.permission.askPermissions
+import com.asgl.sdk.common.permission.isPermissionGranted
 import com.google.mlkit.common.MlKitException
 import java.util.concurrent.ExecutionException
 
-class ScanX : AppCompatActivity(){
+class ScanX(activity: Activity, lifecycleOwner: LifecycleOwner) {
 
     private val TAG = "CameraXUtils"
     private var cameraProviderLiveData: MutableLiveData<ProcessCameraProvider>? = null
@@ -29,8 +34,63 @@ class ScanX : AppCompatActivity(){
     private var mPreviewView: PreviewView? = null
     private var mContext: Context? = null
     private var mLifecycleOwner: LifecycleOwner? = null
+    private val CAMERA_PERMISSION = Manifest.permission.CAMERA
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var lensFacing: Int? = CameraSelector.LENS_FACING_BACK
+    private var permissionDeniedOnce = false
+    private var activity: Activity? = null
+    private var lifecycleOwner: LifecycleOwner? = null
 
-    fun getProcessCameraProvider(context: Application): LiveData<ProcessCameraProvider>? {
+    companion object{
+       val FRONT_CAMERA = CameraSelector.LENS_FACING_FRONT
+        val BACK_CAMERA = CameraSelector.LENS_FACING_BACK
+    }
+
+    init {
+        this.activity = activity
+        this.lifecycleOwner = lifecycleOwner
+    }
+
+    fun askCameraPermission(){
+        // Check for camera permission and request it, if it hasn't yet been granted.
+        activity?.askPermissions(CAMERA_PERMISSION) {
+            onGranted {
+                permissionDeniedOnce = false
+            }
+            onDenied {
+                permissionDeniedOnce = true
+            }
+            onShowRational {
+                if (!permissionDeniedOnce) {
+                    it.retry()
+                }
+            }
+        }
+    }
+
+    fun setCameraFace(lensFacing: Int){
+        this.lensFacing = lensFacing
+    }
+
+    fun startCamera(previewView: PreviewView){
+        getProcessCameraProvider(activity?.application!!)
+            ?.observe(
+                lifecycleOwner!!,
+                androidx.lifecycle.Observer { provider: ProcessCameraProvider? ->
+                    cameraProvider = provider
+                    if (activity?.isPermissionGranted(CAMERA_PERMISSION)!!) {
+                            cameraProvider
+                                ?.bindAllCameraUseCases(
+                                    lifecycleOwner!!,
+                                    previewView,
+                                    activity!!,
+                                    lensFacing!!
+                                )
+                    }
+                })
+    }
+
+    private fun getProcessCameraProvider(context: Application): LiveData<ProcessCameraProvider>? {
         if (cameraProviderLiveData == null) {
             cameraProviderLiveData = MutableLiveData()
             val cameraProviderFuture =
@@ -52,7 +112,7 @@ class ScanX : AppCompatActivity(){
         return cameraProviderLiveData
     }
 
-    fun ProcessCameraProvider.bindAllCameraUseCases(
+    private fun ProcessCameraProvider.bindAllCameraUseCases(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         context: Context,
